@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Encuesta viva</title>
+  <style>
+    :root {
+      --fondo: #f6f5f1; --tarjeta: #ffffff; --texto: #1d2a33; --tenue: #5f6b73;
+      --borde: #dcd9d0; --acento: #1f5368; --barra: #c9963a; --error: #a33a32; --ok: #2f6b3a;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --fondo: #12181c; --tarjeta: #1a2228; --texto: #e8e6e1; --tenue: #9aa5ac;
+        --borde: #2c3740; --acento: #7fb6cc; --barra: #d6a64a; --error: #e08a82; --ok: #8cc79a;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--fondo); color: var(--texto);
+      font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    main { max-width: 680px; margin: 0 auto; padding: 24px 16px 48px; }
+    h1 { font-size: 1.1rem; margin: 0 0 4px; color: var(--acento); letter-spacing: .02em; }
+    .pregunta { font-size: 1.35rem; font-weight: 600; margin: 0 0 20px; line-height: 1.3; }
+    .tarjeta {
+      background: var(--tarjeta); border: 1px solid var(--borde);
+      border-radius: 10px; padding: 16px; margin-bottom: 16px;
+    }
+    form { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end; }
+    label { display: block; font-size: .8rem; color: var(--tenue); margin-bottom: 4px; }
+    input {
+      width: 100%; padding: 10px; font: inherit; color: var(--texto);
+      background: transparent; border: 1px solid var(--borde); border-radius: 6px;
+    }
+    button {
+      padding: 10px 18px; font: inherit; font-weight: 600; cursor: pointer;
+      background: var(--acento); color: var(--tarjeta); border: 0; border-radius: 6px;
+    }
+    button:disabled { opacity: .6; cursor: default; }
+    @media (max-width: 480px) {
+      form { grid-template-columns: 1fr; }
+    }
+    .mensaje { min-height: 1.5em; margin: 8px 0 0; font-size: .9rem; }
+    .mensaje.error { color: var(--error); }
+    .mensaje.ok { color: var(--ok); }
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: center; }
+    .stats div { font-size: .8rem; color: var(--tenue); }
+    .stats strong { display: block; font-size: 1.4rem; color: var(--texto); font-variant-numeric: tabular-nums; }
+    .fila { display: grid; grid-template-columns: 8em 1fr 2.5em; gap: 8px; align-items: center; margin: 4px 0; }
+    .fila .etiqueta { font-size: .8rem; color: var(--tenue); text-align: right; font-variant-numeric: tabular-nums; }
+    .fila .pista { background: var(--fondo); border-radius: 4px; height: 20px; overflow: hidden; }
+    .fila .barra { background: var(--barra); height: 100%; border-radius: 4px; transition: width .3s; }
+    .fila .cuenta { font-size: .85rem; font-variant-numeric: tabular-nums; }
+    @media (max-width: 480px) {
+      .fila { grid-template-columns: 6.5em 1fr 2em; }
+    }
+    .vacio, .nota { color: var(--tenue); font-size: .9rem; }
+    .nota { margin: 8px 0 0; }
+    .nota:empty { display: none; }
+    h2 { font-size: .9rem; color: var(--tenue); margin: 0 0 8px; font-weight: 600; }
+    ul.ultimas { list-style: none; margin: 0; padding: 0; }
+    ul.ultimas li { display: flex; justify-content: space-between; gap: 8px; padding: 6px 0; border-top: 1px solid var(--borde); font-size: .9rem; }
+    ul.ultimas li:first-child { border-top: 0; }
+    ul.ultimas .quien { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    ul.ultimas .valor { font-variant-numeric: tabular-nums; font-weight: 600; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Encuesta viva</h1>
+  <p class="pregunta" id="pregunta"></p>
+
+  <section class="tarjeta">
+    <form id="formulario" novalidate>
+      <div>
+        <label for="alias">Alias (opcional)</label>
+        <input id="alias" maxlength="40" autocomplete="off" placeholder="sin datos personales">
+      </div>
+      <div>
+        <label for="valor">Tu respuesta</label>
+        <input id="valor" inputmode="decimal" autocomplete="off" placeholder="ej. 4.2" required>
+      </div>
+      <button id="enviar" type="submit">Enviar</button>
+    </form>
+    <p class="mensaje" id="mensaje" role="status"></p>
+  </section>
+
+  <section class="tarjeta">
+    <div class="stats">
+      <div>Respuestas<strong id="n">–</strong></div>
+      <div>Mediana<strong id="mediana">–</strong></div>
+      <div>Promedio<strong id="promedio">–</strong></div>
+    </div>
+  </section>
+
+  <section class="tarjeta">
+    <h2>Distribución</h2>
+    <div id="histograma"></div>
+    <p class="nota" id="nota"></p>
+  </section>
+
+  <section class="tarjeta">
+    <h2>Últimas cinco respuestas</h2>
+    <ul class="ultimas" id="ultimas"></ul>
+  </section>
+</main>
+
+<script>
+  // ===== Configuración =====
+  const PREGUNTA = "¿Cuál será la inflación anual de México en septiembre de 2026, según INEGI?";
+  const VALOR_MIN = -100;
+  const VALOR_MAX = 1000;
+  const LIMITE_FILAS_API = 1000; // sin efecto aquí; se usa en la versión conectada
+
+  // Ejercicio 1: 20 respuestas inventadas. No hay base de datos todavía:
+  // lo que envíes vive en esta variable y se pierde al recargar la página.
+  const RESPUESTAS_PRUEBA = [
+    3.6, 3.8, 3.9, 4.0, 4.0, 4.1, 4.1, 4.2, 4.2, 4.2,
+    4.3, 4.3, 4.4, 4.5, 4.5, 4.6, 3.7, 4.8, 3.5, 5.1,
+  ].map((valor, i) => ({ alias: "prueba " + (i + 1), valor, created_at: null }));
+  // =========================
+
+  const $ = (id) => document.getElementById(id);
+  const fmt = (x, dec = 2) =>
+    Number.isFinite(x) ? x.toLocaleString("es-MX", { minimumFractionDigits: dec, maximumFractionDigits: dec }) : "–";
+
+  $("pregunta").textContent = PREGUNTA;
+
+  function mostrarMensaje(texto, tipo) {
+    const m = $("mensaje");
+    m.textContent = texto;
+    m.className = "mensaje" + (tipo ? " " + tipo : "");
+  }
+
+  // ---------- Estadística ----------
+  function cuantil(ordenados, p) {
+    const pos = (ordenados.length - 1) * p;
+    const base = Math.floor(pos);
+    const resto = pos - base;
+    const sig = ordenados[base + 1];
+    return sig === undefined ? ordenados[base] : ordenados[base] + resto * (sig - ordenados[base]);
+  }
+
+  function anchoRedondo(bruto) {
+    const exp = Math.floor(Math.log10(bruto));
+    const f = bruto / 10 ** exp;
+    const paso = f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10;
+    return paso * 10 ** exp;
+  }
+
+  function decimalesDe(ancho) {
+    for (let d = 0; d <= 4; d++) {
+      if (Math.abs(Math.round(ancho * 10 ** d) - ancho * 10 ** d) < 1e-9) return d;
+    }
+    return 4;
+  }
+
+  // Barras con ancho "redondo". Los valores atípicos (fuera de 1.5 veces el
+  // rango intercuartílico) se juntan en la primera o la última barra para que
+  // un 999 no aplane la gráfica.
+  function construirBarras(valores) {
+    const v = [...valores].sort((a, b) => a - b);
+    const min = v[0], max = v[v.length - 1];
+    if (min === max) return [{ etiqueta: fmt(min, decimalesDe(min)), cuenta: v.length }];
+
+    const q1 = cuantil(v, 0.25), q3 = cuantil(v, 0.75), iqr = q3 - q1;
+    let lo = Math.max(min, q1 - 1.5 * iqr);
+    let hi = Math.min(max, q3 + 1.5 * iqr);
+    if (hi <= lo) { lo = min; hi = max; }
+
+    const k = Math.min(12, Math.max(5, Math.ceil(Math.sqrt(v.length))));
+    const ancho = anchoRedondo((hi - lo) / k);
+    // Se trabaja con índices enteros de barra para evitar errores de punto
+    // flotante (3.9 / 0.1 = 38.999…).
+    const idx = (x) => Math.floor(x / ancho + 1e-9);
+    const primera = idx(lo), ultima = idx(hi);
+    const nBarras = ultima - primera + 1;
+    const dec = decimalesDe(ancho);
+
+    const barras = Array.from({ length: nBarras }, (_, i) => ({
+      desde: (primera + i) * ancho, hasta: (primera + i + 1) * ancho, cuenta: 0,
+    }));
+    let bajos = 0, altos = 0;
+    for (const x of v) {
+      let i = idx(x) - primera;
+      if (i < 0) { i = 0; bajos++; }
+      if (i > nBarras - 1) { i = nBarras - 1; altos++; }
+      barras[i].cuenta++;
+    }
+    barras.forEach((b, i) => {
+      if (i === 0 && bajos > 0 && nBarras > 1) b.etiqueta = "< " + fmt(b.hasta, dec);
+      else if (i === nBarras - 1 && altos > 0 && nBarras > 1) b.etiqueta = "≥ " + fmt(b.desde, dec);
+      else b.etiqueta = fmt(b.desde, dec) + " a " + fmt(b.hasta, dec);
+    });
+    return barras;
+  }
+
+  // ---------- Pintar (siempre con textContent: nada que venga de la base se interpreta como HTML) ----------
+  function pintar(filas) {
+    const valores = filas.map((f) => Number(f.valor)).filter(Number.isFinite);
+    const n = valores.length;
+    $("n").textContent = n.toLocaleString("es-MX");
+
+    const cont = $("histograma");
+    cont.replaceChildren();
+    if (n === 0) {
+      $("mediana").textContent = "–";
+      $("promedio").textContent = "–";
+      const p = document.createElement("p");
+      p.className = "vacio";
+      p.textContent = "Aún no hay respuestas. Sé la primera persona en responder.";
+      cont.append(p);
+    } else {
+      const ord = [...valores].sort((a, b) => a - b);
+      $("mediana").textContent = fmt(cuantil(ord, 0.5));
+      $("promedio").textContent = fmt(valores.reduce((s, x) => s + x, 0) / n);
+
+      const barras = construirBarras(valores);
+      const mayor = Math.max(...barras.map((b) => b.cuenta));
+      for (const b of barras) {
+        const fila = document.createElement("div");
+        fila.className = "fila";
+        const et = document.createElement("span");
+        et.className = "etiqueta";
+        et.textContent = b.etiqueta;
+        const pista = document.createElement("div");
+        pista.className = "pista";
+        const barra = document.createElement("div");
+        barra.className = "barra";
+        barra.style.width = (100 * b.cuenta / mayor) + "%";
+        pista.append(barra);
+        const c = document.createElement("span");
+        c.className = "cuenta";
+        c.textContent = b.cuenta;
+        fila.append(et, pista, c);
+        cont.append(fila);
+      }
+    }
+
+    $("nota").textContent = filas.length >= LIMITE_FILAS_API
+      ? "Se muestran las " + LIMITE_FILAS_API + " respuestas más recientes (límite de la API)."
+      : "";
+
+    const ul = $("ultimas");
+    ul.replaceChildren();
+    for (const f of filas.slice(0, 5)) {
+      const li = document.createElement("li");
+      const quien = document.createElement("span");
+      quien.className = "quien";
+      quien.textContent = f.alias && f.alias.trim() ? f.alias.trim() : "anónimo";
+      const val = document.createElement("span");
+      val.className = "valor";
+      val.textContent = fmt(Number(f.valor));
+      li.append(quien, val);
+      ul.append(li);
+    }
+  }
+
+  // ---------- Datos en memoria (ejercicio 1) ----------
+  const filas = [...RESPUESTAS_PRUEBA].reverse(); // más reciente primero
+
+  $("formulario").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const texto = $("valor").value.trim().replace(",", ".");
+    if (!/^-?(\d+(\.\d+)?|\.\d+)$/.test(texto)) {
+      mostrarMensaje("Escribe un número, por ejemplo 4.2", "error");
+      return;
+    }
+    const valor = Number(texto);
+    if (valor < VALOR_MIN || valor > VALOR_MAX) {
+      mostrarMensaje("El valor debe estar entre " + VALOR_MIN + " y " + VALOR_MAX + ".", "error");
+      return;
+    }
+    const alias = $("alias").value.trim().slice(0, 40) || null;
+    filas.unshift({ alias, valor, created_at: new Date().toISOString() });
+    $("valor").value = "";
+    mostrarMensaje("Respuesta agregada (solo en esta pestaña; aún no hay base de datos).", "ok");
+    pintar(filas);
+  });
+
+  pintar(filas);
+</script>
+</body>
+</html>
