@@ -106,20 +106,27 @@
   </section>
 </main>
 
+<!-- supabase-js desde el CDN de jsdelivr: expone la variable global "supabase".
+     Versión fija para que la página no cambie sola si sale una versión nueva. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
 <script>
-  // ===== Configuración =====
+  // ===== Configuración: lo único que se edita =====
   const PREGUNTA = "¿Cuál será la inflación anual de México en septiembre de 2026, según INEGI?";
+
+  // La Project URL y la llave publishable son PÚBLICAS A PROPÓSITO.
+  // Viven en el HTML y en el repo a la vista de todos. Lo que protege la tabla
+  // no es esconderlas, sino los permisos (GRANT) y las políticas RLS de la base:
+  // con esta llave solo se puede insertar y leer respuestas, nunca modificar ni borrar.
+  // NUNCA pongas aquí la llave secreta del proyecto ni la contraseña de la base.
+  const SUPABASE_URL = "https://dhoklretiirnwwqoadno.supabase.co";
+  const SUPABASE_KEY = "sb_publishable_g4YfakbTh8LoxP9DLyVE9A_KTTRM9ZL";
+
+  // Debe coincidir con el check de la tabla (valor between -100 and 1000).
   const VALOR_MIN = -100;
   const VALOR_MAX = 1000;
-  const LIMITE_FILAS_API = 1000; // sin efecto aquí; se usa en la versión conectada
-
-  // Ejercicio 1: 20 respuestas inventadas. No hay base de datos todavía:
-  // lo que envíes vive en esta variable y se pierde al recargar la página.
-  const RESPUESTAS_PRUEBA = [
-    3.6, 3.8, 3.9, 4.0, 4.0, 4.1, 4.1, 4.2, 4.2, 4.2,
-    4.3, 4.3, 4.4, 4.5, 4.5, 4.6, 3.7, 4.8, 3.5, 5.1,
-  ].map((valor, i) => ({ alias: "prueba " + (i + 1), valor, created_at: null }));
-  // =========================
+  const SEGUNDOS_ENTRE_LECTURAS = 5;
+  const LIMITE_FILAS_API = 1000; // máximo por consulta que devuelve la API por defecto
+  // =================================================
 
   const $ = (id) => document.getElementById(id);
   const fmt = (x, dec = 2) =>
@@ -257,11 +264,57 @@
     }
   }
 
-  // ---------- Datos en memoria (ejercicio 1) ----------
-  const filas = [...RESPUESTAS_PRUEBA].reverse(); // más reciente primero
+  // ---------- Base de datos ----------
+  // Se limpian espacios y la diagonal final por si se pegaron al copiar.
+  const URL_LIMPIA = SUPABASE_URL.trim().replace(/\/+$/, "");
+  const LLAVE_LIMPIA = SUPABASE_KEY.trim();
+  const configurado = !URL_LIMPIA.includes("XXXX") && !LLAVE_LIMPIA.includes("XXXX");
+  const db = configurado && window.supabase ? window.supabase.createClient(URL_LIMPIA, LLAVE_LIMPIA) : null;
+  let leyendo = false;
+  let releerAlTerminar = false;
+  let errorDeLectura = false;
 
-  $("formulario").addEventListener("submit", (ev) => {
+  // Agrega una pista en español a los errores más comunes del taller.
+  function explicar(e) {
+    const texto = (e && (e.message || e.details)) || String(e);
+    const t = texto.toLowerCase();
+    let pista = "";
+    if (t.includes("permission denied")) pista = " (falta el GRANT del ejercicio 3)";
+    else if (t.includes("row-level security")) pista = " (falta la política de insert del ejercicio 3)";
+    else if (t.includes("schema cache") || t.includes("does not exist")) pista = " (la tabla respuestas no existe o la API aún no la ve)";
+    else if (t.includes("invalid api key") || t.includes("no api key")) pista = " (revisa la llave publishable)";
+    else if (t.includes("failed to fetch") || t.includes("networkerror")) pista = " (revisa la URL o que el proyecto esté Active)";
+    else if (t.includes("check constraint")) pista = " (valor fuera de rango o alias demasiado largo)";
+    return texto + pista;
+  }
+
+  async function cargar() {
+    if (!db) return;
+    if (leyendo) { releerAlTerminar = true; return; }
+    leyendo = true;
+    try {
+      // select: la única lectura que la página le pide a la base
+      const { data, error } = await db
+        .from("respuestas")
+        .select("alias, valor, created_at")
+        .eq("pregunta", PREGUNTA)
+        .order("created_at", { ascending: false })
+        .limit(LIMITE_FILAS_API);
+      if (error) throw error;
+      pintar(data);
+      if (errorDeLectura) { mostrarMensaje(""); errorDeLectura = false; }
+    } catch (e) {
+      mostrarMensaje("Error al leer: " + explicar(e), "error");
+      errorDeLectura = true;
+    } finally {
+      leyendo = false;
+      if (releerAlTerminar) { releerAlTerminar = false; cargar(); }
+    }
+  }
+
+  $("formulario").addEventListener("submit", async (ev) => {
     ev.preventDefault();
+    if (!db) return;
     const texto = $("valor").value.trim().replace(",", ".");
     if (!/^-?(\d+(\.\d+)?|\.\d+)$/.test(texto)) {
       mostrarMensaje("Escribe un número, por ejemplo 4.2", "error");
@@ -273,13 +326,36 @@
       return;
     }
     const alias = $("alias").value.trim().slice(0, 40) || null;
-    filas.unshift({ alias, valor, created_at: new Date().toISOString() });
-    $("valor").value = "";
-    mostrarMensaje("Respuesta agregada (solo en esta pestaña; aún no hay base de datos).", "ok");
-    pintar(filas);
+
+    $("enviar").disabled = true;
+    mostrarMensaje("Enviando…");
+    try {
+      // insert: la única escritura que la página le pide a la base
+      const { error } = await db.from("respuestas").insert({ pregunta: PREGUNTA, alias, valor });
+      if (error) throw error;
+      $("valor").value = "";
+      errorDeLectura = false;
+      mostrarMensaje("Respuesta guardada. Gracias.", "ok");
+      await cargar();
+    } catch (e) {
+      mostrarMensaje("Error al guardar: " + explicar(e), "error");
+    } finally {
+      $("enviar").disabled = false;
+    }
   });
 
-  pintar(filas);
+  if (!window.supabase) {
+    mostrarMensaje("No se pudo cargar supabase-js desde el CDN. Revisa tu conexión.", "error");
+    $("enviar").disabled = true;
+  } else if (!configurado) {
+    mostrarMensaje("Falta configurar SUPABASE_URL y SUPABASE_KEY al inicio del script.", "error");
+    $("enviar").disabled = true;
+  } else {
+    cargar();
+    // Relee cada 5 segundos, pero solo si la pestaña está visible
+    setInterval(() => { if (!document.hidden) cargar(); }, SEGUNDOS_ENTRE_LECTURAS * 1000);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) cargar(); });
+  }
 </script>
 </body>
 </html>
